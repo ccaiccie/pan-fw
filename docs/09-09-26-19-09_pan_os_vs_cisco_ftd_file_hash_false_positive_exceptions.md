@@ -1,8 +1,8 @@
 # PAN-OS vs Cisco Secure Firewall/FTD: File-Hash False-Positive Exceptions
 
-## Why Cisco FTD Can Whitelist an Exact SHA-256 but PAN-OS Traditional Antivirus Cannot
+## Why Cisco FTD Can Whitelist an Exact SHA-256 but PAN-OS Traditional Antivirus and File Blocking Cannot
 
-> Scope: PAN-OS firewalls and Panorama, with Cisco Secure Firewall/FTD discussed only as a comparison point for file-malware exception behavior.
+> Scope: PAN-OS firewalls and Panorama. Cisco Secure Firewall/FTD is discussed only as a comparison point for exact-file malware exception behavior.
 
 ## Table of Contents
 
@@ -10,18 +10,21 @@
 2. [The Core Difference](#2-the-core-difference)
 3. [How PAN-OS Traditional Antivirus Exceptions Work](#3-how-pan-os-traditional-antivirus-exceptions-work)
 4. [Why a PAN-OS Antivirus Exception Is Broader Than a Hash Allowlist](#4-why-a-pan-os-antivirus-exception-is-broader-than-a-hash-allowlist)
-5. [WildFire Inline ML Is Different](#5-wildfire-inline-ml-is-different)
-6. [How Cisco Secure Firewall/FTD Handles Exact SHA-256 Overrides](#6-how-cisco-secure-firewallftd-handles-exact-sha-256-overrides)
-7. [Side-by-Side Comparison](#7-side-by-side-comparison)
-8. [False Positive vs Signature Collision](#8-false-positive-vs-signature-collision)
-9. [Recommended PAN-OS Operational Workflow](#9-recommended-pan-os-operational-workflow)
-10. [Panorama Considerations](#10-panorama-considerations)
-11. [Verification and Troubleshooting](#11-verification-and-troubleshooting)
-12. [Common Mistakes](#12-common-mistakes)
-13. [Design and Risk Implications](#13-design-and-risk-implications)
-14. [Practical Example](#14-practical-example)
-15. [Key Takeaways](#15-key-takeaways)
-16. [References](#16-references)
+5. [Can File Blocking Be Used to Make the Exception?](#5-can-file-blocking-be-used-to-make-the-exception)
+6. [How File Blocking and Antivirus Interact](#6-how-file-blocking-and-antivirus-interact)
+7. [Can a Separate Security Policy Rule Help?](#7-can-a-separate-security-policy-rule-help)
+8. [WildFire Inline ML Is Different](#8-wildfire-inline-ml-is-different)
+9. [How Cisco Secure Firewall/FTD Handles Exact SHA-256 Overrides](#9-how-cisco-secure-firewallftd-handles-exact-sha-256-overrides)
+10. [Side-by-Side Comparison](#10-side-by-side-comparison)
+11. [False Positive vs Signature Collision](#11-false-positive-vs-signature-collision)
+12. [Recommended PAN-OS Operational Workflow](#12-recommended-pan-os-operational-workflow)
+13. [Panorama Considerations](#13-panorama-considerations)
+14. [Verification and Troubleshooting](#14-verification-and-troubleshooting)
+15. [Common Mistakes](#15-common-mistakes)
+16. [Design and Risk Implications](#16-design-and-risk-implications)
+17. [Practical Example](#17-practical-example)
+18. [Key Takeaways](#18-key-takeaways)
+19. [References](#19-references)
 
 ---
 
@@ -31,13 +34,13 @@ A common operational requirement is:
 
 > "This exact file is known-good. Its SHA-256 is trusted. Allow this one file, but continue blocking every other file that matches the malware detection."
 
-Cisco Secure Firewall/FTD supports this model directly for malware-file disposition overrides. An administrator can place the exact SHA-256 of a known-good file on a **Clean List**. Cisco documents that the system then treats that exact file as clean even if the cloud malware disposition would otherwise classify it as malware.
+Cisco Secure Firewall/FTD supports this model directly in its malware/file-policy workflow by allowing an administrator to place the exact full SHA-256 on a **Clean List**.
 
-Traditional PAN-OS Antivirus handling is different. Palo Alto Networks documents **Signature Exceptions** for conventional Antivirus detections. These exceptions are created using the **Threat ID** associated with the antivirus signature. The exception therefore applies to the signature, not only to one SHA-256 file hash.
+Traditional PAN-OS Antivirus handling is different. Palo Alto Networks documents **Signature Exceptions** for conventional Antivirus detections. These exceptions are configured using the **Threat ID** associated with the antivirus signature. The exception therefore applies to the signature, not only to one SHA-256.
 
-PAN-OS does have a file-hash exception capability, but Palo Alto documents that capability under **WildFire Inline ML File Exceptions**. It must not be confused with a general per-SHA-256 allowlist for traditional Antivirus signatures.
+PAN-OS **File Blocking does not provide a workaround for this limitation**. File Blocking matches file-policy characteristics such as application, file type, transfer direction, and action. It does not provide a SHA-256 match condition that can override a traditional Antivirus detection. Allowing an executable in File Blocking does not tell the Antivirus profile to ignore a matching Threat ID.
 
-This distinction matters because a traditional Antivirus signature may match more than one file. If a benign file collides with a signature that also detects malware, disabling that Threat ID can suppress enforcement for every file that matches that signature in the scope where the Antivirus profile is applied.
+PAN-OS does have a file-hash exception capability under **WildFire Inline ML File Exceptions**, but Palo Alto documents that as a separate mechanism for Inline ML enforcement. It must not be confused with a general per-SHA-256 allowlist for traditional Antivirus signatures.
 
 ![PAN-OS versus Cisco FTD file-hash exception behavior](../images/09-09-26-19-09_pan_vs_ftd_file_hash_exception.svg)
 
@@ -50,8 +53,6 @@ This distinction matters because a traditional Antivirus signature may match mor
 ### PAN-OS traditional Antivirus
 
 **Source information:** Palo Alto Networks documents that Antivirus signature exceptions are configured using a **Threat ID**. For PAN-OS and Panorama, the administrator opens an Antivirus profile, selects **Signature Exceptions**, and adds the Threat ID to exclude that antivirus signature from enforcement.
-
-That is signature-scoped behavior.
 
 Conceptually:
 
@@ -71,17 +72,17 @@ Signature Exception for T123
        +--> T123 no longer enforced in that Antivirus profile
 ```
 
-The exception is not expressed as:
+PAN-OS traditional Antivirus does not provide this general rule form:
 
 ```text
 IF SHA256 == H1
-THEN allow
-ELSE continue normal antivirus enforcement
+THEN bypass AV signature T123
+ELSE continue normal AV enforcement
 ```
 
 ### Cisco Secure Firewall/FTD
 
-Cisco documents a different model in its Malware and File Policy framework. A file with a cloud disposition that the administrator believes is incorrect can have its **full SHA-256** added to a **Clean List**. Cisco states that the system treats that file as clean on subsequent detection.
+Cisco documents a different model in its malware/file-policy framework. A file whose cloud disposition is considered incorrect can have its **full SHA-256** added to a **Clean List**.
 
 Conceptually:
 
@@ -91,7 +92,7 @@ SHA-256 H2 -> not on Clean List -> normal malware evaluation
 SHA-256 H3 -> not on Clean List -> normal malware evaluation
 ```
 
-This gives Cisco FTD a more granular exception mechanism for this specific use case.
+This gives Cisco FTD a more granular exception mechanism for this particular use case.
 
 ---
 
@@ -109,25 +110,23 @@ Objects
 
 The administrator adds the **Threat ID** associated with the antivirus detection.
 
-The Threat ID can be obtained from the firewall Threat log or related threat information. Palo Alto also documents using Threat IDs to inspect the associated threat in Threat Vault.
+The Threat ID can be obtained from the firewall Threat log and investigated using Threat Vault and related threat information.
 
 ### Enforcement scope
 
-The practical scope is the Antivirus profile containing the exception and the Security policy rules that reference that profile, directly or through a Security Profile Group.
+The practical scope is the Antivirus profile containing the exception and every Security policy rule that references that profile, either directly or through a Security Profile Group.
 
 ### Important limitation
 
-Palo Alto Networks explicitly distinguishes Antivirus signature exceptions from other threat exceptions. For antivirus signatures, PAN-OS allows the signature to be excluded from enforcement, but it does not provide the same per-signature action override flexibility documented for spyware and vulnerability signatures.
+The exception key is the **Threat ID**, not the exact SHA-256 of the benign file.
 
-Most importantly for this article, the exception key is the **Threat ID**, not the exact SHA-256 of the benign file.
+That means the administrator is suppressing enforcement of the identified antivirus signature within the scope of that Antivirus profile rather than making a cryptographic identity exception for only one file.
 
 ---
 
 ## 4. Why a PAN-OS Antivirus Exception Is Broader Than a Hash Allowlist
 
-Traditional antivirus detection can be pattern or signature based. A signature may identify characteristics that can appear in multiple files.
-
-Therefore:
+Traditional antivirus detection can be signature or pattern based. More than one file can potentially match the same signature.
 
 ```text
 Malware-A.exe -----------+
@@ -147,19 +146,207 @@ SHA-256 = 8af3...9d72
 
 ### Additional explanation
 
-A SHA-256 allowlist has extremely narrow identity scope: changing even one byte normally changes the hash. A signature exception can have a wider detection scope because it suppresses the detection logic identified by the Threat ID.
+A SHA-256 allowlist has very narrow identity scope. Changing the file changes the hash. A signature exception can have wider detection scope because the exception suppresses the detection logic identified by the Threat ID.
 
 ### Reasonable inference
 
-Because of that difference, a PAN-OS traditional Antivirus exception can carry a larger security blast radius than an exact-file hash allowlist. The actual exposure depends on what the signature detects, how broadly the profile is applied, and whether other security controls also detect the malicious content.
+Because of this difference, a PAN-OS traditional Antivirus exception can have a larger security blast radius than an exact-file hash allowlist. The actual exposure depends on the signature, the policy scope, and whether other security controls detect the same malicious content.
 
 ---
 
-## 5. WildFire Inline ML Is Different
+## 5. Can File Blocking Be Used to Make the Exception?
 
-PAN-OS **does** support file exceptions using hash information under WildFire Inline Machine Learning.
+**No. A PAN-OS File Blocking profile cannot create an exact-file SHA-256 exception for a traditional Antivirus signature.**
 
-Palo Alto Networks documents the following area:
+Palo Alto Networks documents File Blocking as a Security Profile used to control file transfers based on file-policy characteristics such as:
+
+```text
+Name
+Applications
+File Types
+Direction
+Action
+```
+
+Typical actions include:
+
+- `alert`
+- `block`
+- `continue` where supported
+
+A File Blocking rule can express policies such as:
+
+```text
+Block PE downloads from general web browsing
+Alert on PDF transfers
+Allow a particular file type for a particular application
+Prompt a user before downloading selected file types
+```
+
+It is not documented as accepting a full SHA-256 as a match criterion for bypassing a conventional Antivirus signature.
+
+Therefore this logic is not available through File Blocking:
+
+```text
+IF SHA256 == known_good_hash
+    bypass traditional AV signature T123
+ELSE
+    enforce AV normally
+```
+
+### Why changing File Blocking does not solve the AV false positive
+
+If File Blocking is configured not to block an executable, that means only that the **File Blocking profile** is not blocking that file type. It does not create an exception in the **Antivirus profile**.
+
+In other words:
+
+```text
+File Blocking says: "this file type may pass my control"
+
+Antivirus can still say: "this content matches Threat ID T123"
+```
+
+The two controls are independent Security Profiles applied to traffic allowed by Security Policy.
+
+---
+
+## 6. How File Blocking and Antivirus Interact
+
+A Security rule can attach multiple Security Profiles simultaneously:
+
+```text
+Security Policy rule
+  action: allow
+  profiles:
+    Antivirus: AV-Strict
+    Anti-Spyware: AS-Strict
+    Vulnerability Protection: VP-Strict
+    URL Filtering: URL-Strict
+    File Blocking: FB-Standard
+    WildFire Analysis: WF-Forward
+```
+
+Allowing content through one profile does not instruct another profile to bypass inspection.
+
+A useful mental model is:
+
+```text
+Security Policy allows the session
+             |
+             v
+Application/content becomes identifiable
+             |
+             +---------------------------+
+             |                           |
+             v                           v
+      File Blocking                 Antivirus
+  file type/application/        malware signature/
+  direction/action logic        Threat-ID inspection
+             |                           |
+             +-------------+-------------+
+                           |
+                           v
+                   final enforcement
+```
+
+![PAN-OS File Blocking and Antivirus are independent inspection controls](../images/09-09-26-19-09_file_blocking_vs_antivirus_exception.svg)
+
+[Editable draw.io](../images/09-09-26-19-09_file_blocking_vs_antivirus_exception.drawio)
+
+### Example packet/content flow
+
+Consider a user downloading a known-good executable that collides with AV signature `T123`:
+
+```text
+Client 10.10.10.25
+    |
+    | HTTPS download
+    v
+PAN-OS firewall
+    |
+    | Security Policy match = allow
+    v
+Decryption when applicable/configured
+    |
+    v
+App-ID / content decoding
+    |
+    +--> File Blocking profile
+    |      file type = PE
+    |      action = alert / non-blocking behavior
+    |
+    +--> Antivirus profile
+           content matches Threat ID T123
+           enforcement still occurs
+```
+
+The important point is:
+
+```text
+File Blocking permits file type
+            !=
+Skip Antivirus inspection
+```
+
+No NAT-specific transformation is relevant to this exception mechanism. The issue is content inspection inside an allowed session.
+
+---
+
+## 7. Can a Separate Security Policy Rule Help?
+
+**Yes, but only as scope reduction. It still cannot match the file hash.**
+
+A separate Security Policy rule can match a narrower business context and attach a dedicated Antivirus profile containing the Threat-ID exception.
+
+Example:
+
+```text
+Rule: Approved-Software-Download
+Source: Approved-Admin-Users
+Destination: Approved-Vendor-Site
+Application: ssl, web-browsing, vendor-app as appropriate
+Service: application-default
+Action: allow
+Profiles:
+  Antivirus: AV-T123-Temporary-Exception
+  File Blocking: FB-Approved-Software
+```
+
+Every other rule can continue using the normal strict Antivirus profile.
+
+### What this accomplishes
+
+Instead of disabling `T123` for a broadly shared Antivirus profile, the administrator constrains exposure to a narrow combination of:
+
+```text
+source
+user
+zone
+destination
+application
+service
+URL category / destination strategy where appropriate
+```
+
+### What it does not accomplish
+
+A standard PAN-OS Security rule cannot express:
+
+```text
+SHA256 == abcdef...
+```
+
+If a malicious file that also matches `T123` traverses the narrowly scoped exception rule, the Threat-ID exception can apply there too.
+
+Therefore a separate rule is a **blast-radius reduction technique**, not an exact-file allowlist.
+
+---
+
+## 8. WildFire Inline ML Is Different
+
+PAN-OS **does** support File Exceptions using hash information under WildFire Inline Machine Learning.
+
+Typical GUI location:
 
 ```text
 Objects
@@ -170,20 +357,21 @@ Objects
           > File Exceptions
 ```
 
-Palo Alto documentation describes adding a **hash, filename, and description** for a file that should be excluded from WildFire Inline ML enforcement. Current Antivirus profile documentation describes these exceptions as being based on a **partial hash**.
+Palo Alto documentation describes adding hash/partial-hash information together with file metadata such as filename and description for files that should be excluded from WildFire Inline ML enforcement.
 
 This is a key distinction:
 
 | Detection path | PAN-OS exception mechanism |
 |---|---|
 | Traditional Antivirus signature | Threat-ID / Signature Exception |
-| WildFire Inline ML | File Exception using hash/partial hash information |
+| File Blocking | No per-hash AV override |
+| WildFire Inline ML | File Exception using hash/partial-hash information |
 
-Do not assume that the WildFire Inline ML File Exception feature provides an exact SHA-256 whitelist for every traditional Antivirus signature event. Palo Alto documents these as separate exception mechanisms.
+Do not assume that WildFire Inline ML File Exceptions provide a generic exact-SHA-256 whitelist for every traditional Antivirus event.
 
 ---
 
-## 6. How Cisco Secure Firewall/FTD Handles Exact SHA-256 Overrides
+## 9. How Cisco Secure Firewall/FTD Handles Exact SHA-256 Overrides
 
 Cisco Secure Firewall Management Center documents two special file-list concepts:
 
@@ -191,8 +379,6 @@ Cisco Secure Firewall Management Center documents two special file-list concepts
 - **Custom Detection List** — treat the listed SHA-256 as malware.
 
 For a false-positive use case, the Clean List is the relevant mechanism.
-
-Cisco's current Secure Firewall Management Center documentation states that administrators can add an exact SHA-256 to a file list and that the system does not support partial values for this function.
 
 Typical FMC path documented by Cisco:
 
@@ -204,85 +390,83 @@ Objects
         > Add by: Enter SHA Value
 ```
 
-The administrator then supplies the complete SHA-256.
+The administrator supplies the complete SHA-256.
 
-Cisco further documents that file policies can use the Clean List so that a file's disposition can be overridden without requiring the file to be reevaluated on each subsequent detection.
-
-### Why this matters
-
-The administrator can express:
+Conceptually:
 
 ```text
-Allow only H1
+Known-good SHA-256 H1
+        |
+        v
+Cisco FMC Clean List
+        |
+        v
+Treat exact H1 as clean
+
+Different SHA-256 H2
+        |
+        v
+Normal malware evaluation continues
 ```
 
-without expressing:
-
-```text
-Disable malware signature T123 for every file it might match
-```
-
-That is the central behavioral difference from conventional PAN-OS Antivirus exceptions.
+That is the central behavioral difference from traditional PAN-OS Antivirus exceptions.
 
 ---
 
-## 7. Side-by-Side Comparison
+## 10. Side-by-Side Comparison
 
-| Capability | PAN-OS traditional Antivirus | PAN-OS WildFire Inline ML | Cisco Secure Firewall/FTD malware file policy |
-|---|---|---|---|
-| Primary exception identifier | Threat ID / signature | File hash/partial hash + file metadata | Full SHA-256 |
-| Exact-file false-positive handling | Not documented as a general traditional AV feature | Yes, for Inline ML exceptions | Yes, Clean List |
-| Can preserve detection for other files matching the same AV signature? | Not necessarily; the signature itself is exempted | Yes for the specific Inline ML exception use case | Yes, other hashes continue normal evaluation |
-| Central management | Panorama can distribute Antivirus profiles | Panorama-managed Antivirus profiles | FMC |
-| False-positive vendor remediation path | WildFire verdict change / Support / updated content | Inline ML/WildFire correction path | Cloud disposition override plus Cisco malware ecosystem processes |
-| Primary operational risk | Exception can be broader than one file | Narrower file-specific scope | Narrow file-specific scope |
+| Capability | PAN-OS File Blocking | PAN-OS traditional Antivirus | PAN-OS WildFire Inline ML | Cisco Secure Firewall/FTD |
+|---|---|---|---|---|
+| Match file type | Yes | Detection-engine dependent | Model/context dependent | File-policy dependent |
+| Match application/direction for file policy | Yes | Application decoder context | Model/context dependent | Policy dependent |
+| Exact SHA-256 clean-list for traditional AV false positive | No | No general mechanism documented | Not traditional AV; hash-based ML exception exists | Yes, Clean List |
+| Threat-ID exception | No | Yes | Separate mechanism | Different architecture |
+| Can File Blocking override AV verdict? | **No** | N/A | N/A | N/A |
+| Can a Security rule reduce exception scope? | Indirectly | Yes | Yes | Policy dependent |
+| Central management | Panorama | Panorama | Panorama | FMC |
+| Primary risk | File-type scope can be broad | Signature exception can affect multiple matching files | Narrower ML-specific file exception | Exact-file scope for clean-list use case |
 
 ---
 
-## 8. False Positive vs Signature Collision
+## 11. False Positive vs Signature Collision
 
-Palo Alto Networks uses the term **signature collision** for cases where a benign file is incorrectly identified because its byte patterns or structure match a signature generated for another malicious sample.
-
-This can produce an especially important scenario:
+Palo Alto Networks uses the term **signature collision** for cases where a benign file is incorrectly identified because its byte patterns or structure match a signature generated for malicious content.
 
 ```text
 Malicious sample M1
 SHA-256 = A
          |
          v
-Antivirus signature T123 generated/matches
+Antivirus signature T123
 
 Benign sample B1
 SHA-256 = B
          |
-         +--> shares enough relevant signature characteristics
-               to also match T123
+         +--> also matches T123
 ```
 
-Here the benign file and the malicious file have different SHA-256 values, yet the same antivirus signature can fire.
-
-Palo Alto Networks recommends first ensuring Antivirus and WildFire content is current, then using the Threat ID and Threat Vault to investigate the hashes associated with the signature.
+The benign and malicious files can have different SHA-256 values while still triggering the same antivirus signature.
 
 ### Why a hash allowlist would be desirable
 
-In a collision scenario, administrators often want:
+The desired behavior is:
 
 ```text
 B is trusted -> allow B only
 A is malicious -> continue blocking A
 ```
 
-Cisco FTD's Clean List maps naturally to that requirement because the exception is based on B's SHA-256.
+Cisco FTD's Clean List maps naturally to this requirement because the exception is based on B's SHA-256.
 
-Traditional PAN-OS Antivirus instead gives the administrator a signature-level exception for T123. That may allow the business operation to proceed, but it is broader than allowing B alone.
+Traditional PAN-OS Antivirus instead gives the administrator a signature-level exception for `T123`. File Blocking cannot narrow that exception to only `B`.
 
 ---
 
-## 9. Recommended PAN-OS Operational Workflow
+## 12. Recommended PAN-OS Operational Workflow
 
-For a suspected false-positive Antivirus detection, use the following sequence.
+For a suspected false-positive Antivirus detection:
 
-### Step 1 — Identify the detection type
+### Step 1 — Identify the detection source
 
 Go to:
 
@@ -292,7 +476,7 @@ Monitor > Logs > Threat
 
 Determine whether the event is associated with conventional Antivirus/WildFire signature handling or WildFire Inline ML.
 
-Palo Alto LIVEcommunity's PANCast material calls out three relevant threat-log categories:
+Relevant threat-log categories can include:
 
 ```text
 virus
@@ -300,7 +484,7 @@ wildfire-virus
 ml-virus
 ```
 
-The remediation path is not identical for each type.
+The remediation path differs by detection type.
 
 ### Step 2 — Record evidence
 
@@ -312,104 +496,97 @@ Threat name
 Action
 Application
 Source / destination
+Security rule
+Antivirus profile
 File name, if available
 SHA-256, if available
 PAN-OS version
 Antivirus content version
-WildFire content/version state
-Security rule
-Antivirus profile
+WildFire content state
 Timestamp
 ```
 
-### Step 3 — Confirm content currency
+### Step 3 — Confirm dynamic content is current
 
-Palo Alto's false-positive and signature-collision documentation advises confirming that Antivirus and WildFire dynamic content is current before creating a lasting exception.
+Ensure current Antivirus and WildFire dynamic content is installed before creating a lasting exception. A corrected content release may already resolve the false positive.
 
-### Step 4 — Investigate Threat Vault
+### Step 4 — Investigate Threat Vault and WildFire
 
-Use the Threat ID from the Threat log to identify the associated signature and relevant file information.
+Use the Threat ID and available file/hash information to determine whether the issue is:
 
-Compare the known-good file's SHA-256 with hashes associated with the signature when that information is available.
+- an incorrect WildFire verdict,
+- a conventional Antivirus false positive,
+- a signature collision,
+- or a WildFire Inline ML false positive.
 
-### Step 5 — Decide which case applies
+### Step 5 — Choose the correct exception path
 
-#### Case A: WildFire verdict itself is incorrect
+#### Traditional Antivirus false positive / signature collision
 
-Submit a **Report Incorrect Verdict** request through the WildFire workflow or engage Palo Alto Networks Support as appropriate.
+Use a Threat-ID Signature Exception only if necessary, preferably temporarily and in a narrowly scoped Antivirus profile.
 
-#### Case B: Signature collision
+#### WildFire Inline ML false positive
 
-If the known-good file has a different SHA-256 but matches the same AV Threat ID as a malicious sample, treat the condition as a signature-collision investigation.
+Use the dedicated File Exception mechanism where appropriate.
 
-Palo Alto's KB states that if the benign file is confirmed and the signature is producing a collision, an Antivirus exception can be used and Support can be engaged for signature reevaluation.
+#### Incorrect WildFire verdict
 
-#### Case C: WildFire Inline ML false positive
+Use Palo Alto's incorrect-verdict reporting/support workflow rather than relying on a permanent local exception.
 
-Use the dedicated **File Exception** mechanism where appropriate instead of treating it as a conventional Antivirus Threat-ID exception.
+### Step 6 — Do not use File Blocking as an AV bypass
 
-### Step 6 — If an AV Signature Exception is unavoidable, constrain its scope
+Changing a File Blocking action for PE or another file type does not disable Antivirus inspection.
 
-Create a dedicated Antivirus profile instead of weakening a broadly shared profile whenever policy architecture permits.
+### Step 7 — Narrow any temporary AV signature exception
 
-For example:
+Create a dedicated Antivirus profile and attach it only to a tightly scoped Security rule whenever architecture allows.
 
-```text
-Security Rule: Allow-Approved-Software-Download
-  source: approved-admin-subnet
-  destination: approved-software-site
-  application: ssl/web-browsing as appropriate
-  service: application-default
-  Antivirus Profile: AV-Temporary-T123-Exception
-```
+### Step 8 — Remove the exception after vendor correction
 
-Keep the exception out of the default enterprise-wide Antivirus profile when possible.
-
-### Step 7 — Remove the exception after vendor correction
-
-Once updated Palo Alto content resolves the false positive or collision, remove the temporary Threat-ID exception and recommit/push the profile.
+After Palo Alto corrects the signature/verdict in content, remove the local exception and recommit/push the configuration.
 
 ---
 
-## 10. Panorama Considerations
+## 13. Panorama Considerations
 
-In Panorama-managed environments, the Antivirus profile can be part of a Device Group policy configuration.
+In Panorama-managed environments, keep temporary exceptions in the narrowest appropriate **Device Group** and policy scope.
 
-Operationally distinguish:
+Recommended workflow:
+
+```text
+1. Create or clone a dedicated Antivirus profile.
+2. Add only the required Threat-ID Signature Exception.
+3. Attach it only to the narrow Security Policy rule.
+4. Commit to Panorama.
+5. Push Device Group configuration to the required firewall(s).
+6. Verify the pushed rule/profile on the managed firewall.
+7. Remove the exception after content correction.
+8. Commit and Push again.
+```
+
+Remember the operational distinction:
 
 ```text
 Commit to Panorama
 ```
 
-from:
+updates Panorama's configuration, while:
 
 ```text
 Push to Devices
 ```
 
-A local Panorama commit stores the candidate change in Panorama's running configuration. The managed firewalls do not receive the policy/profile change until the appropriate device-group push is performed.
+sends the applicable Device Group policy/profile configuration to managed firewalls.
 
-### Recommended design
-
-If only a narrow traffic class requires a temporary false-positive exception:
-
-1. Clone or create a dedicated Antivirus profile.
-2. Place the Threat-ID exception only in that profile.
-3. Apply it to the narrowest Security rule that satisfies the business requirement.
-4. Commit to Panorama.
-5. Push the applicable Device Group configuration.
-6. Verify the managed firewall received the profile and Security policy.
-7. Remove the exception after the signature/verdict is corrected.
-
-Avoid adding the Threat-ID exception to a shared enterprise-wide Antivirus profile unless the business requirement genuinely applies everywhere.
+Avoid adding a false-positive Threat-ID exception to a broadly inherited/shared Antivirus profile unless that scope is genuinely required.
 
 ---
 
-## 11. Verification and Troubleshooting
+## 14. Verification and Troubleshooting
 
-### Check 1 — Confirm the triggering Threat ID
+### Check 1 — Identify the enforcement engine
 
-**Where:** Firewall GUI or Panorama logs
+**Where:** Firewall or Panorama
 
 **Tool:**
 
@@ -417,287 +594,267 @@ Avoid adding the Threat-ID exception to a shared enterprise-wide Antivirus profi
 Monitor > Logs > Threat
 ```
 
-**What it tests:** Confirms exactly which antivirus threat signature generated the event.
+**What it tests:** Determines whether the event is traditional Antivirus/WildFire-signature handling or WildFire Inline ML.
 
-**Expected state:** The event contains the relevant threat name, Threat ID, action, source/destination, application, and timestamp.
+**Expected state:** Threat log contains the threat name/ID, action, application, rule, and relevant detection information.
 
-**Failure indicator:** The administrator is attempting to exempt a file without first proving which engine/signature generated the block.
+**Failure indicator:** Selecting an exception mechanism before identifying the engine that produced the detection.
 
-**Next action:** Identify whether the event is `virus`, `wildfire-virus`, or `ml-virus` and choose the corresponding remediation path.
+**Next action:** Classify the event and use Signature Exception or Inline ML File Exception as appropriate.
 
-### Check 2 — Confirm the Security rule and Antivirus profile
+### Check 2 — Verify File Blocking separately
 
-**Where:** Firewall or Panorama policy configuration
+**Where:**
 
-**What it tests:** Determines which Antivirus profile is actually enforcing the event.
+```text
+Objects > Security Profiles > File Blocking
+```
 
-**Expected state:** The matching Security policy references the intended Security Profile Group or Antivirus profile.
+**What it tests:** Determines whether the file type itself is being blocked by File Blocking.
 
-**Failure indicator:** The exception was added to a profile that is not used by the matching rule.
+**Expected state:** The matched File Blocking rule/action is understood independently from the Antivirus action.
 
-**Next action:** Correct profile assignment or locate the actual rule/profile pair.
+**Failure indicator:** Assuming a File Blocking non-block action suppresses Antivirus.
 
-### Check 3 — Verify dynamic content is current
+**Next action:** Inspect the Antivirus profile referenced by the same Security rule.
 
-**Where:** Device dynamic updates
+### Check 3 — Confirm the Antivirus profile
+
+**Where:**
+
+```text
+Objects > Security Profiles > Antivirus
+```
+
+**What it tests:** Determines which Antivirus settings and Signature Exceptions apply.
+
+**Expected state:** Only intentionally approved Threat IDs appear as exceptions.
+
+**Failure indicator:** A broadly shared Antivirus profile contains a temporary exception needed only for one business workflow.
+
+**Next action:** Move the exception to a dedicated profile/rule if feasible.
+
+### Check 4 — Verify dynamic content
+
+**Where:**
 
 ```text
 Device > Dynamic Updates
 ```
 
-**What it tests:** Ensures the firewall is not enforcing a signature already corrected in a newer content release.
+**What it tests:** Ensures an old signature/content package is not causing an already-fixed false positive.
 
-**Expected state:** Current Antivirus and WildFire content appropriate for the deployed release/subscriptions.
+**Expected state:** Antivirus and WildFire content is current for the deployed release/subscriptions.
 
-**Failure indicator:** Old content remains installed or scheduled updates are failing.
+**Failure indicator:** Old content is installed or scheduled updates are failing.
 
-**Next action:** Correct update connectivity/scheduling and retest before creating a broad exception.
+**Next action:** Correct update connectivity/scheduling and retest.
 
-### Check 4 — Validate the hash externally and in WildFire/Threat Vault
+### Check 5 — Verify Panorama deployment
 
-**Where:** Threat Vault / WildFire report / trusted malware-analysis source
+**Where:** Panorama and managed firewall
 
-**What it tests:** Helps distinguish incorrect verdict from signature collision.
+**What it tests:** Confirms both Commit and Push completed and the target firewall received the intended profile/rule.
 
-**Expected state:** Evidence supports that the business file is benign and explains whether its SHA-256 is directly associated with the malicious verdict or merely collides with an AV signature.
+**Expected state:** Managed firewall shows the expected policy/profile assignment.
 
-**Failure indicator:** The file has significant independent malicious indicators.
+**Failure indicator:** Change exists on Panorama but not on the firewall.
 
-**Next action:** Do not create a false-positive exception until the file has been validated.
+**Next action:** Review push scope/status and Device Group targeting.
 
-### Check 5 — Verify Panorama push state
+### Check 6 — Retest the file and inspect logs
 
-**Where:** Panorama
+**What it tests:** Determines whether the expected profile and exception path actually changed enforcement.
 
-**What it tests:** Confirms the exception/profile/rule reached the target firewall.
+**Expected state:** The known-good business flow behaves as intended while unrelated traffic continues to use the strict Antivirus profile.
 
-**Expected state:** Commit succeeds and device push succeeds for the intended managed devices.
+**Failure indicator:** The same Threat ID still blocks the file, or the exception affects traffic broader than intended.
 
-**Failure indicator:** Panorama is committed but the target firewall has not received the updated Device Group configuration.
-
-**Next action:** Review push scope, commit-all/device-group status, and any validation errors.
+**Next action:** Recheck Security Policy matching, profile assignment, Panorama push state, content versions, and detection type.
 
 ---
 
-## 12. Common Mistakes
+## 15. Common Mistakes
 
-### Mistake 1 — Assuming PAN-OS File Exceptions apply to all antivirus detections
-
-They do not. Palo Alto documents File Exceptions specifically in the WildFire Inline ML portion of the Antivirus profile.
-
-### Mistake 2 — Treating Threat-ID exception as equivalent to a SHA-256 whitelist
-
-It is not equivalent. One references an antivirus signature; the other references one specific file identity.
-
-### Mistake 3 — Applying the exception to the global/shared Antivirus profile
-
-That unnecessarily increases scope. A dedicated temporary Antivirus profile and narrow Security rule can reduce exposure.
-
-### Mistake 4 — Ignoring signature collision
-
-The benign file may not be the original file that caused the AV signature to exist. Different hashes can match the same pattern-based signature.
-
-### Mistake 5 — Skipping content updates
-
-The problem may already be corrected by updated Antivirus/WildFire content.
-
-### Mistake 6 — Leaving a temporary exception indefinitely
-
-Document an owner and removal condition for every false-positive exception.
-
-### Mistake 7 — Forgetting Panorama push
-
-`Commit` and `Push` are separate operational steps in a Panorama-managed deployment.
+- Assuming **File Blocking = malware policy**. PAN-OS File Blocking primarily controls file-transfer policy; Antivirus performs malware signature inspection.
+- Allowing `.exe` or another file type in File Blocking and expecting an Antivirus false positive to disappear.
+- Assuming File Blocking can match SHA-256.
+- Confusing **WildFire Inline ML File Exceptions** with traditional Antivirus Signature Exceptions.
+- Adding a Threat-ID exception to an enterprise-wide Antivirus profile when only one application or user population requires temporary relief.
+- Treating a filename as cryptographic identity.
+- Creating an exception before confirming current Antivirus/WildFire content.
+- Failing to remove the exception after Palo Alto corrects the signature.
+- Assuming Cisco FMC Clean List behavior has a direct PAN-OS File Blocking equivalent.
+- Forgetting that Panorama requires both **Commit** and **Push** for Device Group policy/profile changes to reach managed firewalls.
 
 ---
 
-## 13. Design and Risk Implications
+## 16. Design and Risk Implications
 
-### PAN-OS traditional Antivirus exception
+The important design difference is **exception granularity**.
 
-Potential impact:
+### Exact-hash exception
 
 ```text
-Threat ID T123
-   |
-   +--> File A: known malware
-   +--> File B: benign collision
-   +--> File C: another file matching T123
-
-Exception T123
-   |
-   +--> T123 enforcement suppressed in the profile scope
+Trust H1 only
 ```
 
-This is why the exception should be as temporary and narrowly applied as possible.
+The exception is bound to one cryptographic file identity.
 
-### Cisco FTD Clean List
-
-Potential impact:
+### PAN-OS traditional AV exception
 
 ```text
-File B SHA-256 = H-B
-        |
-        +--> Clean List
-
-File A SHA-256 = H-A -> normal evaluation
-File C SHA-256 = H-C -> normal evaluation
+Do not enforce T123 in this AV profile
 ```
 
-The exception scope is much closer to the administrator's intent when the requirement is "allow exactly this file."
+The exception is bound to the antivirus signature.
 
-### Defense-in-depth reminder
+### PAN-OS File Blocking rule
 
-Even when a PAN-OS Antivirus Threat ID must temporarily be exempted, other PAN-OS controls may still provide protection depending on traffic and configuration, including:
+```text
+Allow/alert/block this file type in this application/direction
+```
 
-- WildFire analysis
-- WildFire Inline ML
-- Vulnerability Protection
-- Anti-Spyware
-- URL Filtering
-- DNS Security
-- application controls
-- Decryption, which can be required to expose encrypted file transfers for inspection
+The rule is bound to file-policy characteristics, not the AV Threat ID or exact SHA-256.
 
-Do not assume these controls automatically compensate for an Antivirus exception; verify the actual packet/session inspection path.
+Therefore File Blocking cannot bridge the granularity gap between PAN-OS traditional Antivirus and Cisco's per-hash Clean List model.
+
+The best PAN-OS mitigation when a traditional AV exception is unavoidable is to constrain the affected **traffic scope**, not pretend the exception itself became hash-specific.
 
 ---
 
-## 14. Practical Example
+## 17. Practical Example
 
 Assume:
 
 ```text
-File: vendor-update.exe
-SHA-256: 1111...AAAA
-PAN-OS Threat ID: 999999
-PAN-OS action: reset-both
-Business validation: vendor confirms file is legitimate
-Threat Vault: Threat ID also corresponds to malicious samples with other hashes
+Known-good file: vendor-agent.exe
+SHA-256: H-GOOD
+PAN-OS detection: Threat ID 31234
+Vendor confirms the binary is legitimate
 ```
 
-### Desired policy
+### Desired behavior
 
 ```text
-Allow SHA-256 1111...AAAA
-Continue blocking all other files that match Threat ID 999999
+H-GOOD -> allow
+Any other file matching Threat ID 31234 -> continue blocking
 ```
 
-### Cisco FTD
-
-This maps naturally to a Clean List entry:
+### Cisco FTD model
 
 ```text
-Clean List
-  SHA-256 = 1111...AAAA
+H-GOOD -> FMC Clean List
+Other SHA-256 values -> normal malware evaluation
 ```
 
-Other hashes continue through the malware disposition workflow.
-
-### PAN-OS traditional Antivirus
-
-The native conventional AV exception is:
+### PAN-OS File Blocking attempt
 
 ```text
-Signature Exception
-  Threat ID = 999999
+File type: PE
+Action: alert / non-block
 ```
 
-This does not express "only SHA-256 1111...AAAA."
-
-A safer temporary PAN-OS workaround is therefore architectural scoping:
+Result:
 
 ```text
-Narrow Security rule
+File Blocking does not block PE
         |
         v
-Dedicated Antivirus profile
+Antivirus still evaluates content
         |
         v
-Threat ID 999999 exception
+Threat ID 31234 still matches
+        |
+        v
+AV enforcement still occurs
 ```
 
-Restrict that rule using the narrowest reasonable source, destination, application, URL/category context, schedule, and other policy conditions that are supported by the intended traffic flow.
+### PAN-OS temporary workaround
 
-Then pursue the permanent fix through Palo Alto's false-positive/verdict/signature-remediation process.
+```text
+Security Rule: Approved-Vendor-Agent
+  tightly scoped source/user/destination/application
+  Antivirus Profile: AV-Vendor-Temporary
 
----
+AV-Vendor-Temporary
+  Signature Exception: Threat ID 31234
+```
 
-## 15. Key Takeaways
-
-1. **Traditional PAN-OS Antivirus exceptions are Threat-ID/signature based.**
-2. **They are not a general exact-SHA-256 allowlist for one benign file.**
-3. **PAN-OS WildFire Inline ML has a separate file-exception capability using hash information.**
-4. **Cisco Secure Firewall/FTD explicitly supports exact SHA-256 Clean List overrides for malware file dispositions.**
-5. **A PAN-OS AV signature collision can involve a benign file and malicious files with different hashes matching the same Threat ID.**
-6. **Before creating an exception, update content, inspect Threat logs, validate the hash, investigate Threat Vault/WildFire, and determine whether the issue is an incorrect verdict or signature collision.**
-7. **If a traditional PAN-OS Antivirus exception is temporarily required, minimize its blast radius with a dedicated profile and narrowly scoped Security rule.**
-8. **In Panorama, remember that Commit and Push are distinct operations.**
+This reduces exposure to traffic matching `Approved-Vendor-Agent`, but it does **not** create a true `H-GOOD` allowlist.
 
 ---
 
-## 16. References
+## 18. Key Takeaways
 
-### Palo Alto Networks — Official Documentation
-
-**Security Profile: Antivirus**  
-https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-profiles/security-profile-antivirus
-
-**Configure an Antivirus Profile (PAN-OS & Panorama)**  
-https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-profiles/security-profile-antivirus/configure-an-antivirus-profile-pm
-
-**Create Threat Exceptions**  
-https://docs.paloaltonetworks.com/advanced-threat-prevention/administration/configure-threat-prevention/create-threat-exceptions
-
-**Enable Advanced WildFire Inline ML**  
-https://docs.paloaltonetworks.com/advanced-wildfire/administration/configure-advanced-wildfire-analysis/enable-advanced-wildfire-inline-ml
-
-**WildFire Inline ML**  
-https://docs.paloaltonetworks.com/wildfire/u-v/wildfire-whats-new/wildfire-features-in-panos-100/configure-wildfire-inline-ml
-
-**Learn More About Threat Signatures**  
-https://docs.paloaltonetworks.com/advanced-threat-prevention/administration/monitor-threat-prevention/learn-more-about-threat-signatures
-
-### Palo Alto Networks — Knowledge Base
-
-**Triage and Resolution of False Positives in Palo Alto Networks Antivirus Profiles**  
-https://knowledgebase.paloaltonetworks.com/articles/en_US/Knowledge/Triage-and-Resolution-of-False-Positives-in-Palo-Alto-Networks-Antivirus-Profiles
-
-**What is a signature collision?**  
-https://knowledgebase.paloaltonetworks.com/articles/en_US/Knowledge/What-is-a-signature-collision
-
-**What is an Antivirus Signature Collision in the case of a False Positive, and how can we deal with it?**  
-https://knowledgebase.paloaltonetworks.com/KCSArticleDetail?id=kA10g000000ClWICA0
-
-### Palo Alto Networks — LIVEcommunity
-
-**PANCast Episode 20: Threat Logs - AV**  
-https://live.paloaltonetworks.com/t5/pancast-episodes/pancast-episode-20-threat-logs-av/ta-p/546632
-
-**False Positive AV block**  
-https://live.paloaltonetworks.com/t5/advanced-threat-prevention/false-positive-av-block/td-p/216075
-
-**False Positive Submission: 7zip installer**  
-https://live.paloaltonetworks.com/t5/virustotal/false-positive-submission-7zip-installer/td-p/186266
-
-### Cisco — Comparison References
-
-**Cisco Secure Firewall Management Center Device Configuration Guide 7.7 — File Policies for Network Malware Protection**  
-https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/770/management-center-device-config-77/advanced-access-file.html
-
-**Cisco Secure Firewall Management Center Device Configuration Guide 7.7 — Object Management / File Lists**  
-https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/770/management-center-device-config-77/objects-object-mgmt.html
-
-**Cisco Secure Firewall Malware and File Policy Guidance**  
-https://secure.cisco.com/secure-firewall/v7.0/docs/malware-and-file-policy
-
-**Cisco FTD API — Custom Detection List**  
-https://developer.cisco.com/docs/ftd-api-reference/latest/customdetectionlist/
+1. **Traditional PAN-OS Antivirus does not provide a general exact-SHA-256 false-positive allowlist equivalent to Cisco FTD's Clean List.**
+2. Traditional PAN-OS Antivirus exceptions are **Threat-ID/signature scoped**.
+3. **PAN-OS File Blocking cannot be used to create the missing hash-specific AV exception.**
+4. File Blocking and Antivirus are separate Security Profiles; allowing a file type does not suppress Antivirus inspection.
+5. A dedicated Security rule/profile can **reduce the blast radius** of a Threat-ID exception, but it still cannot match one file by SHA-256.
+6. **WildFire Inline ML File Exceptions** are hash/partial-hash based, but they apply to that separate detection path.
+7. Cisco FTD/FMC Clean Lists can identify the exact trusted file by full SHA-256, which is the important functional difference for this use case.
+8. For PAN-OS traditional AV false positives, the preferred long-term fix is vendor correction of the false positive/signature collision rather than a permanent broad signature exception.
 
 ---
 
-## Source Classification Note
+## 19. References
 
-- Statements describing Palo Alto configuration paths, Threat-ID exceptions, WildFire Inline ML File Exceptions, signature-collision guidance, and false-positive remediation are based on Palo Alto Networks documentation, KB, and LIVEcommunity material listed above.
-- Statements describing Cisco Clean Lists, full SHA-256 file-list entries, and disposition override behavior are based on Cisco documentation listed above.
-- Security blast-radius discussion and recommendations to narrow the Security-rule/profile scope are additional architectural explanation and risk analysis derived from those documented behaviors.
+### Palo Alto Networks
+
+- **Security Profile: File Blocking**  
+  https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-profiles/security-profile-file-blocking
+
+- **Security Profiles** — explains that Security Profiles inspect traffic allowed by Security Policy and describes File Blocking separately from Antivirus  
+  https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/policy/security-profiles
+
+- **Security Profile: Antivirus**  
+  https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-profiles/security-profile-antivirus
+
+- **Configure an Antivirus Profile (PAN-OS & Panorama)** — Signature Exceptions and WildFire Inline ML File Exceptions  
+  https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-profiles/security-profile-antivirus/configure-an-antivirus-profile-pm
+
+- **Create Threat Exceptions** — Antivirus signature exceptions by Threat ID  
+  https://docs.paloaltonetworks.com/advanced-threat-prevention/administration/configure-threat-prevention/create-threat-exceptions
+
+- **Enable Advanced WildFire Inline ML** — File Exceptions for Inline ML false positives  
+  https://docs.paloaltonetworks.com/advanced-wildfire/administration/configure-advanced-wildfire-analysis/enable-advanced-wildfire-inline-ml
+
+- **Triage and Resolution of False Positives in Palo Alto Networks Antivirus Profiles**  
+  https://knowledgebase.paloaltonetworks.com/KCSArticleDetail?id=kA14u000000oM8MCAU
+
+- **What is a signature collision?**  
+  https://knowledgebase.paloaltonetworks.com/KCSArticleDetail?id=kA10g000000ClSOCA0
+
+- **LIVEcommunity**  
+  https://live.paloaltonetworks.com/
+
+### Cisco Secure Firewall / FTD comparison
+
+- **Secure Firewall Management Center Device Configuration Guide — Advanced Access Control / File Lists**  
+  https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/770/management-center-device-config-77/advanced-access-file.html
+
+---
+
+## Final Decision Matrix
+
+```text
+What generated the detection?
+
+Traditional PAN-OS Antivirus signature
+        |
+        +--> Need exact SHA-256 allowlist?
+                 |
+                 +--> File Blocking? NO
+                 +--> Security Policy hash match? NO
+                 +--> AV Signature Exception? YES, but Threat-ID scoped
+                 +--> Best long-term action: correct false positive/signature
+
+WildFire Inline ML
+        |
+        +--> File Exception may be available using hash/partial-hash information
+
+Cisco FTD malware/file policy
+        |
+        +--> Full SHA-256 Clean List can provide exact-file exception behavior
+```
